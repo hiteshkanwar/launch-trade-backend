@@ -28,3 +28,6 @@ test-ledger/*.sst
 test-ledger/
 *.log
 *.sst
+test-ledger/
+*.log
+*.sst
