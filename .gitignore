@@ -25,3 +25,6 @@ test-ledger/
 test-ledger/rocksdb/
 test-ledger/*.log
 test-ledger/*.sst
+test-ledger/
+*.log
+*.sst
