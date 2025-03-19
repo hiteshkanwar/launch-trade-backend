@@ -28,7 +28,7 @@ const Token = sequelize.define("Token", {
     auto_liquidity: { type: DataTypes.BOOLEAN, defaultValue: false },
     dex_url: { type: DataTypes.STRING } // Stores Raydium DEX URL
 }, {
-    timestamps: true, // Enables createdAt and updatedAt fields
+    timestamps: true, // ✅ Enable createdAt and updatedAt fields
 });
 
 // **Associations**

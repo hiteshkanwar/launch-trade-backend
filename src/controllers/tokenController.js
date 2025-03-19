@@ -1,111 +1,264 @@
-const fs = require("fs");
-const { Connection, Keypair, PublicKey, LAMPORTS_PER_SOL, SystemProgram, Transaction, sendAndConfirmTransaction } = require("@solana/web3.js");
+const {
+    Connection,
+    Keypair,
+    PublicKey,
+    SystemProgram,
+    sendAndConfirmTransaction,
+    Transaction
+} = require("@solana/web3.js");
+
+const {
+    Metaplex,
+    keypairIdentity
+} = require("@metaplex-foundation/js");
+const axios = require("axios");
+const FormData = require("form-data");
+
+const {
+    createCreateMetadataAccountV3Instruction
+} = require("@metaplex-foundation/mpl-token-metadata");
+
 const {
     createMint,
     getOrCreateAssociatedTokenAccount,
-    mintTo,
-    TOKEN_PROGRAM_ID
+    mintTo
 } = require("@solana/spl-token");
+
 const Token = require("../models/Token");
 const User = require("../models/User");
-const { createRaydiumPool, addLiquidity, listOnRaydium } = require("../services/raydiumService");
-const { registerTokenMetadata } = require("../services/registerMetadata");
 
-const { uploadMetadataToIPFS } = require("../services/ipfsService");
 require("dotenv").config();
 
-const connection = new Connection(process.env.SOLANA_RPC_URL, "confirmed");
-const secretKey = Uint8Array.from(JSON.parse(process.env.SOLANA_SECRET_KEY));
-const payer = Keypair.fromSecretKey(secretKey);
-const COMMISSION_WALLET = new PublicKey(process.env.COMMISION_WALLET);
-// const BASE_FEE_SOL = 0.015 * LAMPORTS_PER_SOL; // Base fee for token creation
-const BASE_FEE_SOL = 0 * LAMPORTS_PER_SOL; // Base fee for token creation
+const METAPLEX_METADATA_PROGRAM_ID = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
 
-const RAYDIUM_LISTING_FEE = 0.02 * LAMPORTS_PER_SOL; // Fee for auto-listing on Raydium
+const connection = new Connection(process.env.SOLANA_RPC_URL, "confirmed");
+const adminSecretKey = Uint8Array.from(JSON.parse(process.env.SOLANA_SECRET_KEY));
+const adminKeypair = Keypair.fromSecretKey(adminSecretKey);
+
+// ✅ Initialize Metaplex without BundlrStorage
+const metaplex = Metaplex.make(connection)
+    .use(keypairIdentity(adminKeypair));
+
+const STATIC_IMAGE_URL = "https://arweave.net/abcdef1234567890"; // Replace with your actual hosted image
+
+const uploadToPinata = async (metadata, base64Image) => {
+    try {
+        console.log("🔹 Using Pinata API Key:", process.env.PINATA_API_KEY);
+        console.log("🔹 Using Pinata Secret Key:", process.env.PINATA_SECRET_KEY ? "Loaded ✅" : "❌ MISSING");
+
+        const formData = new FormData();
+        let imageIpfsUrl = metadata.image; // Default to existing URL if no image is provided
+
+        // **Step 1: Upload Image (if provided)**
+        if (base64Image) {
+            console.log("🟡 Converting Base64 Image to Buffer...");
+            const base64Data = base64Image.replace(/^data:image\/\w+;base64,/, ""); // Remove metadata
+            const imageBuffer = Buffer.from(base64Data, "base64");
+
+            formData.append("file", imageBuffer, {
+                filename: "image.jpg",
+                contentType: "image/jpeg",
+            });
+
+            const imageResponse = await axios.post(
+                "https://api.pinata.cloud/pinning/pinFileToIPFS",
+                formData,
+                {
+                    maxContentLength: Infinity,
+                    headers: {
+                        "Content-Type": `multipart/form-data; boundary=${formData._boundary}`,
+                        "pinata_api_key": process.env.PINATA_API_KEY,
+                        "pinata_secret_api_key": process.env.PINATA_SECRET_KEY,
+                    },
+                }
+            );
+
+            imageIpfsUrl = `https://gateway.pinata.cloud/ipfs/${imageResponse.data.IpfsHash}`;
+            console.log("✅ Image Uploaded Successfully:", imageIpfsUrl);
+        }
+
+        // **Step 2: Upload Metadata JSON**
+        metadata.image = imageIpfsUrl; // Replace the image field with the uploaded IPFS URL
+        const metadataBuffer = Buffer.from(JSON.stringify(metadata));
+
+        const metadataForm = new FormData();
+        metadataForm.append("file", metadataBuffer, {
+            filename: "metadata.json",
+            contentType: "application/json",
+        });
+
+        const metadataResponse = await axios.post(
+            "https://api.pinata.cloud/pinning/pinFileToIPFS",
+            metadataForm,
+            {
+                maxContentLength: Infinity,
+                headers: {
+                    "Content-Type": `multipart/form-data; boundary=${metadataForm._boundary}`,
+                    "pinata_api_key": process.env.PINATA_API_KEY,
+                    "pinata_secret_api_key": process.env.PINATA_SECRET_KEY,
+                },
+            }
+        );
+
+        const metadataIpfsUrl = `https://gateway.pinata.cloud/ipfs/${metadataResponse.data.IpfsHash}`;
+        console.log("✅ Metadata Uploaded Successfully:", metadataIpfsUrl);
+
+        return metadataIpfsUrl;
+    } catch (error) {
+        console.error("❌ Pinata Upload Failed:", error.response?.data || error.message);
+        throw new Error("Metadata upload failed!");
+    }
+};
+
+
 
 exports.createToken = async (req, res) => {
     try {
-        const { user_id, name, symbol, supply, description, autoLiquidity, liquiditySOL, liquidityTokens, wallet_address } = req.body;
-        const image = req.file ? req.file.filename : null;
-        const solLiquidity = parseFloat(liquiditySOL) * LAMPORTS_PER_SOL;
-        const tokenLiquidity = parseFloat(liquidityTokens) * 10 ** 9;
+        const { user_wallet, name, symbol, supply, description, txSignature, image } = req.body;
 
-        console.log("🔹 Validating User...");
-        let user = await User.findOne({ where: { wallet_address } });
-        if (!user) {
-            user = await User.create({ wallet_address });
+        if (!user_wallet) {
+            return res.status(400).json({ success: false, message: "User wallet address is required" });
         }
 
-        console.log("🔹 Creating new token on Solana...");
+        console.log(" User Wallet Address:", user_wallet);
+        const userPublicKey = new PublicKey(user_wallet);
 
-        // **Step 1: Collect Fees**
-        let totalFee = BASE_FEE_SOL;
-        if (autoLiquidity) {
-            totalFee += RAYDIUM_LISTING_FEE;
+        console.log("🔹 Verifying Transaction Signature:", txSignature);
+        const transactionStatus = await connection.getTransaction(txSignature, { commitment: "confirmed" });
+
+        if (!transactionStatus || !transactionStatus.meta || transactionStatus.meta.err) {
+            return res.status(400).json({ success: false, message: "Payment verification failed!" });
         }
 
-        const transferTransaction = new Transaction().add(
-            SystemProgram.transfer({
-                fromPubkey: payer.publicKey,
-                toPubkey: COMMISSION_WALLET,
-                lamports: totalFee,
-            })
-        );
-        await sendAndConfirmTransaction(connection, transferTransaction, [payer]);
-        console.log(`✅ Commission of ${totalFee / LAMPORTS_PER_SOL} SOL sent to ${COMMISSION_WALLET.toBase58()}`);
+        console.log(" Payment Verified. Proceeding with token creation...");
+
+        //  Declare metadataUri outside to ensure it is always accessible
+        let metadataUri = "";
+
+        try {
+            const metadata = {
+                name,
+                symbol,
+                description,
+                image: image || STATIC_IMAGE_URL,
+                attributes: [{ trait_type: "Category", value: "Meme Coin" }]
+            };
+
+            console.log("🟡 Metadata JSON Before Upload:", JSON.stringify(metadata, null, 2));
+
+            metadataUri = await uploadToPinata(metadata, image); // Pass the base64 image
+            console.log(" Metadata Uploaded Successfully:", metadataUri);
+
+        } catch (error) {
+            console.error("❌ Metadata Upload Failed:", error);
+            return res.status(500).json({ success: false, message: "Metadata upload failed!" });
+        }
+
+        //  Now metadataUri will always exist before this line
+        console.log(" Metadata Uploaded:", metadataUri);
 
         // **Step 2: Create Token Mint**
-        const mint = await createMint(connection, payer, payer.publicKey, payer.publicKey, 9);
-        console.log(`✅ Mint Address: ${mint.toBase58()}`);
+        const mint = await createMint(connection, adminKeypair, adminKeypair.publicKey, null, 9);
 
-        // **Step 3: Create Token Account**
-        const tokenAccount = await getOrCreateAssociatedTokenAccount(connection, payer, mint, payer.publicKey);
-        console.log(`✅ Token Account Address: ${tokenAccount.address.toBase58()}`);
+        // **Step 3: Create Associated Token Account for User**
+        console.log("🔹 Creating User Token Account...");
+        const userTokenAccount = await getOrCreateAssociatedTokenAccount(
+            connection,
+            adminKeypair,
+            mint,
+            userPublicKey
+        );
 
-        // **Step 4: Mint Tokens**
-        await mintTo(connection, payer, mint, tokenAccount.address, payer.publicKey, supply * 10 ** 9);
-        console.log("✅ Tokens Minted!");
+        // **Step 4: Mint Tokens to User**
+        console.log("🔹 Minting Tokens...");
+        await mintTo(
+            connection,
+            adminKeypair,
+            mint,
+            userTokenAccount.address,
+            adminKeypair.publicKey,
+            supply * 10 ** 9
+        );
 
-        // **Step 5: Upload Metadata to IPFS**
-        console.log("🔹 Uploading Metadata to IPFS...");
-        const metadataUrl = await uploadMetadataToIPFS({ name, symbol, description, image: req.file?.ipfsUrl });
-        console.log(`✅ Metadata Uploaded: ${metadataUrl}`);
+        // **Step 5: Attach Metadata to Token**
+        const metadataPDA = PublicKey.findProgramAddressSync(
+            [
+                Buffer.from("metadata"),
+                METAPLEX_METADATA_PROGRAM_ID.toBuffer(),
+                mint.toBuffer(),
+            ],
+            METAPLEX_METADATA_PROGRAM_ID
+        )[0];
 
-       // **Step 6: Register Metadata on Solana**
-        console.log('🔹 Registering Metadata on Solana...');
-        await registerTokenMetadata(mint.toBase58(), metadataUrl, name, symbol);
-        console.log('✅ Metadata successfully registered on Solana!');
+        console.log("🔹 Attaching Metadata to Token...");
+        const metadataTransaction = new Transaction().add(
+            createCreateMetadataAccountV3Instruction(
+                {
+                    metadata: metadataPDA,
+                    mint: mint,
+                    mintAuthority: adminKeypair.publicKey,
+                    payer: adminKeypair.publicKey,
+                    updateAuthority: adminKeypair.publicKey,
+                },
+                {
+                    createMetadataAccountArgsV3: {
+                        data: {
+                            name,
+                            symbol,
+                            uri: metadataUri, //  Now metadataUri exists
+                            sellerFeeBasisPoints: 0, // No royalties
+                            creators: null,
+                            uses: null,
+                            collection: null,
+                        },
+                        isMutable: true,
+                        collectionDetails: null,
+                    },
+                }
+            )
+        );
 
-        let dexUrl = null;
-        // **Step 6: Auto Liquidity & Listing if Enabled**
-        if (autoLiquidity) {
-            console.log("🔹 Adding Custom Liquidity & Listing on Raydium...");
-            await createRaydiumPool(mint);
-            await addLiquidity(mint, tokenLiquidity, solLiquidity);
-            await listOnRaydium(mint);
-            dexUrl = `https://raydium.io/token/${mint.toBase58()}`;
-            console.log(`✅ Token Listed on Raydium: ${dexUrl}`);
+        await sendAndConfirmTransaction(connection, metadataTransaction, [adminKeypair]);
+
+        console.log(" Token Metadata Attached Successfully");
+
+        // **Step 6: Save User & Token Data in Database**
+        try {
+            // Find or create the user in the database
+            let [user, created] = await User.findOrCreate({
+                where: { wallet_address: user_wallet },
+                defaults: {}
+            });
+
+            console.log(`🔹 User ${created ? "created" : "found"} in database.`);
+
+            // Save token details in the database
+            const newToken = await Token.create({
+                user_id: user.id,
+                name,
+                symbol,
+                supply,
+                description,
+                image_url: metadataUri,
+                mint_address: mint.toBase58(),
+                commission_paid: false,
+                commission_amount: 0,
+                auto_liquidity: false,
+                dex_url: ""
+            });
+
+            console.log(" Token Saved to Database:", newToken.id);
+
+        } catch (dbError) {
+            console.error(" Database Save Failed:", dbError);
+            return res.status(500).json({ success: false, message: "Failed to save token to database!" });
         }
-        console.log(22222, user)
-        // **Step 7: Save Token in Database**
-        const newToken = await Token.create({
-            user_id: user.id,
-            name,
-            symbol,
-            supply,
-            description,
-            image_url: image ? `/uploads/${image}` : null,
-            mint_address: mint.toBase58(),
-            commission_paid: true,
-            commission_amount: totalFee / LAMPORTS_PER_SOL,
-            auto_liquidity: autoLiquidity || false,
-            dex_url: dexUrl
-        });
 
-        res.status(201).json({
+        res.status(200).json({
             success: true,
-            message: autoLiquidity ? "Token Created & Listed on Raydium" : "Token Created Successfully",
-            data: newToken
+            mintAddress: mint.toBase58(),
+            metadataUrl: metadataUri,
+            tokenAccount: userTokenAccount.address.toBase58(),
         });
 
     } catch (error) {
@@ -113,3 +266,4 @@ exports.createToken = async (req, res) => {
         res.status(500).json({ success: false, message: "Internal server error" });
     }
 };
+

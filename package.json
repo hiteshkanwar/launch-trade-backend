@@ -1,11 +1,13 @@
 {
   "dependencies": {
     "@metaplex-foundation/js": "^0.20.1",
+    "@metaplex-foundation/mpl-core": "^1.2.0",
     "@metaplex-foundation/mpl-token-metadata": "^3.4.0",
     "@metaplex-foundation/mpl-toolbox": "^0.10.0",
     "@metaplex-foundation/umi": "^1.1.1",
     "@metaplex-foundation/umi-bundle-defaults": "^1.1.1",
     "@noble/ed25519": "^2.2.3",
+    "@pinata/sdk": "^2.1.0",
     "@solana/spl-token": "^0.4.12",
     "@solana/web3.js": "^1.98.0",
     "cors": "^2.8.5",

@@ -8,16 +8,12 @@ const User = sequelize.define("User", {
         primaryKey: true,
     },
     wallet_address: { 
-        type: DataTypes.STRING, 
+        type: DataTypes.STRING(255), 
         allowNull: false, 
         unique: true 
-    },
-    created_at: { 
-        type: DataTypes.DATE, 
-        defaultValue: DataTypes.NOW 
     }
 }, {
-    timestamps: false // Ensures created_at is used instead of Sequelize's default timestamps
+    timestamps: true, // ✅ Ensure Sequelize handles createdAt and updatedAt
 });
 
 module.exports = User;
