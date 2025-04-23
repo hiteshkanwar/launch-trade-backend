@@ -4,6 +4,7 @@ const dotenv = require("dotenv");
 const tokenRoutes = require("./routes/tokenRoutes");
 const userRoutes = require("./routes/userRoutes");
 
+
 dotenv.config();
 
 const app = express();
@@ -15,6 +16,9 @@ app.use(cors({
     allowedHeaders: ["Content-Type", "Authorization"], // Allowed headers
     credentials: true // Allow cookies & authentication headers
 }));
+
+console.log(555555,process.env.NODE_ENV == "development" )
+
 
 app.use("/api/tokens", tokenRoutes);
 app.use("/api/users", userRoutes);

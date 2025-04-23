@@ -1,43 +1,62 @@
+require('dotenv').config();
+const { Op } = require("sequelize"); // Add at the top if not already
 const {
     Connection,
     Keypair,
     PublicKey,
     SystemProgram,
     sendAndConfirmTransaction,
-    Transaction
+    Transaction,
+    LAMPORTS_PER_SOL
 } = require("@solana/web3.js");
-
 const {
     Metaplex,
     keypairIdentity
 } = require("@metaplex-foundation/js");
-const axios = require("axios");
-const FormData = require("form-data");
-
 const {
     createCreateMetadataAccountV3Instruction
 } = require("@metaplex-foundation/mpl-token-metadata");
-
 const {
     createMint,
     getOrCreateAssociatedTokenAccount,
     mintTo
 } = require("@solana/spl-token");
+const axios = require("axios");
+const FormData = require("form-data");
+const BN = require("bn.js");
+
 
 const Token = require("../models/Token");
 const User = require("../models/User");
+// const {
+//     createSerumMarket,
+//     createRaydiumPool,
+//     addLiquidity
+// } = require("../services/raydiumService");
+// const { fetchRaydiumPoolInfo } = require("../utils/fetchRaydiumPoolInfo");
+const { isBotRequest } = require("../utils/antiBotProtections");
+const verifyPayment = require("../utils/verifyPayment");
+//  const { createOrcaClassicPool } = require("../services/orcaClassicPoolService");
+// const { createWhirlpoolAndAddLiquidity } = require("../services/orcaWhirlpoolService");
+// const { createSplashPoolWrapper } = require("../services/orcaSplashService");
+// const { addLiquidityToSplashPool } = require("../services/orcaAddLiquidityService");
+// const { openFullRangeLiquidity } = require("../services/openFullRangeLiquidity");
+const { createMeteoraPool } = require("../services/meteoraService");
 
-require("dotenv").config();
 
 const METAPLEX_METADATA_PROGRAM_ID = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
 
 const connection = new Connection(process.env.SOLANA_RPC_URL, "confirmed");
 const adminSecretKey = Uint8Array.from(JSON.parse(process.env.SOLANA_SECRET_KEY));
 const adminKeypair = Keypair.fromSecretKey(adminSecretKey);
+const COMMISSION_WALLET = new PublicKey(process.env.COMMISSION_WALLET);
+const ADMIN_WALLET = new PublicKey(process.env.ADMIN_WALLET);
+const IS_DEV = process.env.NODE_ENV !== "production";
+const MIN_SOL = IS_DEV ? 0.0001 : 0.1;
+const MIN_TOKENS = IS_DEV ? 10 : 100;
 
-// ✅ Initialize Metaplex without BundlrStorage
-const metaplex = Metaplex.make(connection)
-    .use(keypairIdentity(adminKeypair));
+const metaplex = Metaplex.make(connection).use(keypairIdentity(adminKeypair));
+
 
 const STATIC_IMAGE_URL = "https://arweave.net/abcdef1234567890"; // Replace with your actual hosted image
 
@@ -110,160 +129,343 @@ const uploadToPinata = async (metadata, base64Image) => {
     }
 };
 
+exports.getTokensByWallet = async (req, res) => {
+    try {
+      const wallet = req.params.wallet;
+  
+      const user = await User.findOne({ where: { wallet_address: wallet } });
+      if (!user) {
+        return res.status(404).json({ success: false, message: "User not found." });
+      }
+  
+      const tokens = await Token.findAll({
+        where: { user_id: user.id },
+        order: [["createdAt", "DESC"]],
+      });
+  
+      if (tokens.length === 0) {
+        return res.status(200).json({ success: true, tokens: [], message: "No tokens found for this wallet." });
+      }
+  
+      res.status(200).json({ success: true, tokens });
+    } catch (error) {
+      console.error("❌ Error fetching tokens:", error);
+      res.status(500).json({ success: false, message: "Failed to fetch tokens." });
+    }
+  };
+  
 
-
+// Enhanced Token Creation Controller - Supports Standard & Advanced Plans
 exports.createToken = async (req, res) => {
     try {
-        const { user_wallet, name, symbol, supply, description, txSignature, image } = req.body;
+        const {
+            autoLiquidity,
+            planType,
+            user_wallet,
+            liquiditySOL,
+            liquidityTokens,
+            name,
+            symbol,
+            supply,
+            description,
+            txSignature,
+            image,
+            mintable
+        } = req.body;
 
-        if (!user_wallet) {
-            return res.status(400).json({ success: false, message: "User wallet address is required" });
+        const ip = req.headers["x-forwarded-for"] || req.connection.remoteAddress;
+        let txId = null;
+        let poolAddress = null;
+
+        console.log("📥 liquidityTokens (raw):", liquidityTokens);
+        console.log("📥 liquiditySOL (raw):", liquiditySOL);
+
+         // let liquiditySig = null;
+         const tokenFloat = parseFloat(liquidityTokens);
+         const solFloat = parseFloat(liquiditySOL);
+ 
+         console.log("🔎 Parsed liquidityTokens (float):", tokenFloat);
+         console.log("🔎 Parsed liquiditySOL (float):", solFloat);
+ 
+ 
+         const initialPrice = solFloat / tokenFloat;
+         console.log("📈 initialPrice:", initialPrice);
+
+        if (await isBotRequest(user_wallet, ip)) {
+            return res.status(429).json({ success: false, message: "⛔ Too many requests. Please slow down." });
         }
 
-        console.log(" User Wallet Address:", user_wallet);
+        const validPlans = ["basic", "standard", "advanced"];
+        if (!validPlans.includes(planType)) {
+            return res.status(400).json({ success: false, message: "Invalid plan type." });
+        }
+
+        if (planType === "standard" && (!liquiditySOL || !liquidityTokens)) {
+            return res.status(400).json({ success: false, message: "Standard plan requires SOL and token liquidity." });
+        }
+
+        if (supply < MIN_TOKENS) {
+            return res.status(400).json({ success: false, message: `Supply must be at least ${MIN_TOKENS}.` });
+        }
+
+        const existing = await Token.findOne({ where: { symbol } });
+        if (existing) {
+            return res.status(400).json({ success: false, message: `Token "${symbol}" already exists.` });
+        }
+
         const userPublicKey = new PublicKey(user_wallet);
+        const [user] = await User.findOrCreate({ where: { wallet_address: user_wallet } });
 
-        console.log("🔹 Verifying Transaction Signature:", txSignature);
-        const transactionStatus = await connection.getTransaction(txSignature, { commitment: "confirmed" });
-
-        if (!transactionStatus || !transactionStatus.meta || transactionStatus.meta.err) {
-            return res.status(400).json({ success: false, message: "Payment verification failed!" });
-        }
-
-        console.log(" Payment Verified. Proceeding with token creation...");
-
-        //  Declare metadataUri outside to ensure it is always accessible
-        let metadataUri = "";
-
-        try {
-            const metadata = {
-                name,
-                symbol,
-                description,
-                image: image || STATIC_IMAGE_URL,
-                attributes: [{ trait_type: "Category", value: "Meme Coin" }]
+        // 💰 Fee Calculation
+        let expectedCommission = 0;
+        let expectedAdmin = 0;
+        // if (IS_DEV) {
+        //     expectedCommission = 0.00035;
+        //     expectedAdmin = 0.00015;
+        // } else {
+        //     const planPricing = {
+        //         basic: [0.049, 0.021],
+        //         standard: [0.35, 0.15],
+        //         advanced: [1.75, 0.75],
+        //     };
+        //     [expectedCommission, expectedAdmin] = planPricing[planType];
+        // }
+       
+            const planPricing = {
+                basic: [0.049, 0.021],
+                standard: [0.049, 0.21],
+                // standard: [0.35, 0.15],
+                advanced: [1.05, 0.45],
             };
+        
+            [expectedCommission, expectedAdmin] = planPricing[planType];
+    
 
-            console.log("🟡 Metadata JSON Before Upload:", JSON.stringify(metadata, null, 2));
-
-            metadataUri = await uploadToPinata(metadata, image); // Pass the base64 image
-            console.log(" Metadata Uploaded Successfully:", metadataUri);
-
-        } catch (error) {
-            console.error("❌ Metadata Upload Failed:", error);
-            return res.status(500).json({ success: false, message: "Metadata upload failed!" });
-        }
-
-        //  Now metadataUri will always exist before this line
-        console.log(" Metadata Uploaded:", metadataUri);
-
-        // **Step 2: Create Token Mint**
-        const mint = await createMint(connection, adminKeypair, adminKeypair.publicKey, null, 9);
-
-        // **Step 3: Create Associated Token Account for User**
-        console.log("🔹 Creating User Token Account...");
-        const userTokenAccount = await getOrCreateAssociatedTokenAccount(
+        // ⛔ Payment Verification (Uncomment if needed)
+        const isPaymentValid = await verifyPayment(
             connection,
-            adminKeypair,
-            mint,
-            userPublicKey
-        );
+            txSignature,
+            user_wallet,
+            COMMISSION_WALLET,
+            ADMIN_WALLET,
+            Math.round(expectedCommission * LAMPORTS_PER_SOL),
+            Math.round(expectedAdmin * LAMPORTS_PER_SOL)
+          );
+          
+          if (!isPaymentValid) {
+            return res.status(400).json({ success: false, message: "Invalid payment." });
+          }
+          
 
-        // **Step 4: Mint Tokens to User**
-        console.log("🔹 Minting Tokens...");
-        await mintTo(
-            connection,
-            adminKeypair,
-            mint,
-            userTokenAccount.address,
-            adminKeypair.publicKey,
-            supply * 10 ** 9
-        );
+        const metadataUri = await uploadToPinata({
+            name, symbol, description, image: image || STATIC_IMAGE_URL,
+            attributes: [{ trait_type: "Category", value: "Meme Coin" }]
+        }, image);
 
-        // **Step 5: Attach Metadata to Token**
+        const freezeAuthority = mintable ? adminKeypair.publicKey : null;
+        const mint = await createMint(connection, adminKeypair, adminKeypair.publicKey, freezeAuthority, 9);
+
+        // mint to user account
+        const userTokenAccount = await getOrCreateAssociatedTokenAccount(connection, adminKeypair, mint, userPublicKey);
+        await mintTo(connection, adminKeypair, mint, userTokenAccount.address, adminKeypair.publicKey, supply * 10 ** 9);
+
+        // // mint to admin
+        // const adminTokenAccount = await getOrCreateAssociatedTokenAccount(connection, adminKeypair, mint, adminKeypair.publicKey);
+        // console.log("📍 Admin ATA:", adminTokenAccount.address.toBase58());
+        // const liquidityAmount = BigInt(tokenFloat * 10 ** 9);
+        // await mintTo(connection, adminKeypair, mint, adminTokenAccount.address, adminKeypair.publicKey, liquidityAmount);
+  
+        // const balance = await connection.getTokenAccountBalance(adminTokenAccount.address);
+        // console.log("💰 Admin Token Balance:", balance.value.uiAmountString);
+
         const metadataPDA = PublicKey.findProgramAddressSync(
             [
-                Buffer.from("metadata"),
-                METAPLEX_METADATA_PROGRAM_ID.toBuffer(),
-                mint.toBuffer(),
+              Buffer.from("metadata"),
+              METAPLEX_METADATA_PROGRAM_ID.toBuffer(),
+              mint.toBuffer()
             ],
             METAPLEX_METADATA_PROGRAM_ID
-        )[0];
-
-        console.log("🔹 Attaching Metadata to Token...");
-        const metadataTransaction = new Transaction().add(
+          )[0];
+          
+          const metadataTx = new Transaction().add(
             createCreateMetadataAccountV3Instruction(
-                {
-                    metadata: metadataPDA,
-                    mint: mint,
-                    mintAuthority: adminKeypair.publicKey,
-                    payer: adminKeypair.publicKey,
-                    updateAuthority: adminKeypair.publicKey,
+              {
+                metadata: metadataPDA,
+                mint: mint,
+                mintAuthority: adminKeypair.publicKey,
+                payer: adminKeypair.publicKey,
+                updateAuthority: adminKeypair.publicKey,
+              },
+              {
+                createMetadataAccountArgsV3: {
+                  data: {
+                    name,
+                    symbol,
+                    uri: metadataUri, // Must be from Pinata or Arweave!
+                    sellerFeeBasisPoints: 0,
+                    creators: null,
+                    uses: null,
+                    collection: null,
+                  },
+                  isMutable: true,
+                  collectionDetails: null,
                 },
-                {
-                    createMetadataAccountArgsV3: {
-                        data: {
-                            name,
-                            symbol,
-                            uri: metadataUri, //  Now metadataUri exists
-                            sellerFeeBasisPoints: 0, // No royalties
-                            creators: null,
-                            uses: null,
-                            collection: null,
-                        },
-                        isMutable: true,
-                        collectionDetails: null,
-                    },
-                }
+              }
             )
-        );
+          );
+          
+          await sendAndConfirmTransaction(connection, metadataTx, [adminKeypair]);          
+        
 
-        await sendAndConfirmTransaction(connection, metadataTransaction, [adminKeypair]);
+        const baseMint = mint.toBase58();
+        console.log("baseMint",baseMint)
+        const quoteMint = process.env.SOL_TOKEN_MINT;
+        let tokenAmount = 0;
+        let solAmount = 0;
+       
 
-        console.log(" Token Metadata Attached Successfully");
+        if (initialPrice < 0.0000001) {
+            return res.status(400).json({ success: false, message: "Price too low. Adjust SOL/token ratio." });
+        }
+          
+        // ✅ Standard Plan - Immediate Liquidity
+        if (autoLiquidity && planType != 'basic')
+        {
+                        // 🧠 Shared Logic for Standard & Advanced: Mint to correct ATA
+            const baseMintPk = new PublicKey(baseMint);
+            const quoteMintPk = new PublicKey(process.env.SOL_TOKEN_MINT);
 
-        // **Step 6: Save User & Token Data in Database**
-        try {
-            // Find or create the user in the database
-            let [user, created] = await User.findOrCreate({
-                where: { wallet_address: user_wallet },
-                defaults: {}
-            });
+            const [mintA, mintB] = [baseMintPk, quoteMintPk].sort((a, b) =>
+            a.toBase58().localeCompare(b.toBase58())
+            );
 
-            console.log(`🔹 User ${created ? "created" : "found"} in database.`);
+            const isTokenA = baseMintPk.equals(mintA);
+            const ataA = await getOrCreateAssociatedTokenAccount(connection, adminKeypair, mintA, adminKeypair.publicKey);
+            const ataB = await getOrCreateAssociatedTokenAccount(connection, adminKeypair, mintB, adminKeypair.publicKey);
 
-            // Save token details in the database
-            const newToken = await Token.create({
-                user_id: user.id,
-                name,
-                symbol,
-                supply,
-                description,
-                image_url: metadataUri,
-                mint_address: mint.toBase58(),
-                commission_paid: false,
-                commission_amount: 0,
-                auto_liquidity: false,
-                dex_url: ""
-            });
+            const mintToATA = isTokenA ? ataA.address : ataB.address;
+            const liquidityAmount = BigInt(tokenFloat * 10 ** 9); // Token amount for liquidity
 
-            console.log(" Token Saved to Database:", newToken.id);
+            console.log(`🎯 Minting liquidity tokens to ATA of ${isTokenA ? "Token A" : "Token B"}: ${mintToATA.toBase58()}`);
 
-        } catch (dbError) {
-            console.error(" Database Save Failed:", dbError);
-            return res.status(500).json({ success: false, message: "Failed to save token to database!" });
+            await mintTo(
+            connection,
+            adminKeypair,
+            baseMintPk,
+            mintToATA,
+            adminKeypair,
+            liquidityAmount
+            );
+
         }
 
-        res.status(200).json({
+        if (autoLiquidity && planType === "standard") {
+            tokenAmount = parseFloat(liquidityTokens) * 10 ** 9;
+            solAmount = parseFloat(liquiditySOL) * LAMPORTS_PER_SOL;
+            // meteora pool
+            const { txId: createdTxId, poolAddress: createdPoolAddress } = await createMeteoraPool({
+                tokenMintA: baseMint,
+                tokenMintB: process.env.SOL_TOKEN_MINT,
+                amountA: new BN(Math.floor(tokenFloat * 1e9)), // tokens with 9 decimals
+                amountB: new BN(Math.floor(solFloat * LAMPORTS_PER_SOL)) // SOL in lamports
+              });
+            txId = createdTxId;
+            poolAddress = createdPoolAddress;
+                                    
+              
+            
+        }
+
+        // ⏳ Advanced Plan - Delayed Liquidity
+        if (autoLiquidity && planType === "advanced") {
+           
+            tokenAmount = parseFloat(liquidityTokens) * 10 ** 9;
+            solAmount = parseFloat(liquiditySOL) * LAMPORTS_PER_SOL;
+            
+            await Token.create({
+              user_id: user.id,
+              name, symbol, supply, description, mintable,
+              image_url: metadataUri,
+              mint_address: baseMint,
+              commission_paid: true, commission_amount: expectedCommission,
+              admin_paid: true, admin_amount: expectedAdmin,
+              total_fee_paid_by_user: expectedCommission + expectedAdmin,
+              payment_signature: txSignature,
+              auto_liquidity: true,
+              dex_url: `https://birdeye.so/token/${baseMint}?chain=solana`,
+              jupiter_url: `https://jup.ag/swap?inputMint=${baseMint}&outputMint=${quoteMint}`,
+              meteora_url: null,
+              initial_liquidity_token: tokenAmount,
+              initial_liquidity_sol: solAmount,
+              liquidity_added: false,
+              cooldown_applied: true,
+              cooldown_timestamp: new Date()
+            });
+            
+
+            const cooldownTime = 5 * 60 * 1000; // 5 minutes
+
+            setTimeout(async () => {
+              try {
+                const { txId, poolAddress } = await createMeteoraPool({
+                  tokenMintA: baseMint,
+                  tokenMintB: process.env.SOL_TOKEN_MINT,
+                  amountA: new BN(Math.floor(tokenFloat * 1e9)),
+                  amountB: new BN(Math.floor(solFloat * LAMPORTS_PER_SOL))
+                });
+            
+                await Token.update({
+                  liquidity_added: true,
+                  liquidity_added_at: new Date(),
+                  meteora_url: `https://app.meteora.ag/pools/${poolAddress}`
+                }, { where: { mint_address: baseMint } });
+            
+                console.log("✅ Advanced Plan: Liquidity added after delay");
+              } catch (err) {
+                console.error("❌ Advanced Plan Liquidity Failed:", err.message);
+              }
+            }, cooldownTime);
+            
+            return res.status(200).json({
+                success: true,
+                message: "Token created with delayed liquidity (advanced plan).",
+                mintAddress: baseMint,
+            });
+        }
+
+        if (planType !== "advanced") {
+
+            await Token.create({
+                user_id: user.id,
+                name, symbol, supply, description, mintable,
+                image_url: metadataUri,
+                mint_address: baseMint,
+                commission_paid: true, commission_amount: expectedCommission,
+                admin_paid: true, admin_amount: expectedAdmin,
+                total_fee_paid_by_user: expectedCommission + expectedAdmin,
+                payment_signature: txSignature,
+                auto_liquidity: true,
+                dex_url: `https://birdeye.so/token/${baseMint}?chain=solana`,
+                jupiter_url: `https://jup.ag/swap?inputMint=${baseMint}&outputMint=${quoteMint}`,
+                meteora_url: poolAddress ? `https://app.meteora.ag/pools/${poolAddress}` : null,
+                initial_liquidity_token: tokenAmount,
+                initial_liquidity_sol: solAmount,
+                liquidity_added: true
+            });
+        } 
+
+        return res.status(200).json({
             success: true,
-            mintAddress: mint.toBase58(),
-            metadataUrl: metadataUri,
-            tokenAccount: userTokenAccount.address.toBase58(),
+            message: "Token created and listed.",
+            mintAddress: baseMint,
+            jupiterUrl: `https://jup.ag/swap?inputMint=${baseMint}&outputMint=${quoteMint}`,
+            birdeyeUrl: `https://birdeye.so/token/${baseMint}?chain=solana`,
+            meteoraUrl: poolAddress ? `https://app.meteora.ag/pools/${poolAddress}` : null
         });
 
     } catch (error) {
-        console.error("❌ Error creating token:", error);
-        res.status(500).json({ success: false, message: "Internal server error" });
+        console.error("❌ Error:", error);
+        res.status(500).json({ success: false, message: "Token creation failed." });
     }
 };
 
