@@ -28,19 +28,9 @@ const BN = require("bn.js");
 
 const Token = require("../models/Token");
 const User = require("../models/User");
-// const {
-//     createSerumMarket,
-//     createRaydiumPool,
-//     addLiquidity
-// } = require("../services/raydiumService");
-// const { fetchRaydiumPoolInfo } = require("../utils/fetchRaydiumPoolInfo");
+
 const { isBotRequest } = require("../utils/antiBotProtections");
 const verifyPayment = require("../utils/verifyPayment");
-//  const { createOrcaClassicPool } = require("../services/orcaClassicPoolService");
-// const { createWhirlpoolAndAddLiquidity } = require("../services/orcaWhirlpoolService");
-// const { createSplashPoolWrapper } = require("../services/orcaSplashService");
-// const { addLiquidityToSplashPool } = require("../services/orcaAddLiquidityService");
-// const { openFullRangeLiquidity } = require("../services/openFullRangeLiquidity");
 const { createMeteoraPool } = require("../services/meteoraService");
 
 
@@ -234,8 +224,9 @@ exports.createToken = async (req, res) => {
             const planPricing = {
                 basic: [0.049, 0.021],
                 standard: [0.049, 0.21],
+                advanced: [0, 0],
                 // standard: [0.35, 0.15],
-                advanced: [1.05, 0.45],
+              //  advanced: [1.05, 0.45],
             };
         
             [expectedCommission, expectedAdmin] = planPricing[planType];
@@ -381,6 +372,9 @@ exports.createToken = async (req, res) => {
            
             tokenAmount = parseFloat(liquidityTokens) * 10 ** 9;
             solAmount = parseFloat(liquiditySOL) * LAMPORTS_PER_SOL;
+
+            console.log("Liquidity Tokens to be added:", tokenFloat);
+            console.log("Liquidity SOL to be added:", solFloat);
             
             await Token.create({
               user_id: user.id,
