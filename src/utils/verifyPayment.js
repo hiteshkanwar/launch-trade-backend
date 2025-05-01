@@ -10,18 +10,18 @@ module.exports = async function verifyPayment(
   expectedCommissionLamports,
   expectedAdminLamports
 ) {
-  console.log("🔍 Running verifyPayment...");
+  console.log("Running verifyPayment...");
   if (process.env.NODE_ENV !== "production") {
-    console.log("🧪 Dev mode: skipping verifyPayment.");
+    console.log("Dev mode: skipping verifyPayment.");
     return true;
   }
 
   console.log("🔗 Checking txSignature:", txSignature);
-  console.log("🧾 Expected Commission (lamports):", expectedCommissionLamports);
-  console.log("🧾 Expected Admin (lamports):", expectedAdminLamports);
-  console.log("📨 User Wallet:", userWallet);
-  console.log("🏦 Commission Wallet:", commissionWallet.toBase58());
-  console.log("🏦 Admin Wallet:", adminWallet.toBase58());
+  console.log("Expected Commission (lamports):", expectedCommissionLamports);
+  console.log("Expected Admin (lamports):", expectedAdminLamports);
+  console.log("User Wallet:", userWallet);
+  console.log("Commission Wallet:", commissionWallet.toBase58());
+  console.log("Admin Wallet:", adminWallet.toBase58());
 
   try {
     let txDetails = null;
@@ -32,9 +32,9 @@ module.exports = async function verifyPayment(
       });
 
       if (txDetails) {
-        console.log(`⏳ Attempt ${i + 1}: Transaction found.`);
+        console.log(`Attempt ${i + 1}: Transaction found.`);
       } else {
-        console.log(`⏳ Attempt ${i + 1}: Transaction not found.`);
+        console.log(`Attempt ${i + 1}: Transaction not found.`);
       }
 
       if (txDetails && txDetails.meta) {
@@ -48,7 +48,7 @@ module.exports = async function verifyPayment(
     }
 
     if (!txDetails || !txDetails.meta) {
-      console.log("❌ Transaction still not found after retries.");
+      console.log("Transaction still not found after retries.");
       return false;
     }
 
@@ -85,7 +85,7 @@ module.exports = async function verifyPayment(
         amount === expectedCommissionLamports
       ) {
         commissionPaid = true;
-        console.log("✅ Matched commission transfer.");
+        console.log("Matched commission transfer.");
       }
 
       if (
@@ -94,24 +94,24 @@ module.exports = async function verifyPayment(
         amount === expectedAdminLamports
       ) {
         adminPaid = true;
-        console.log("✅ Matched admin transfer.");
+        console.log("Matched admin transfer.");
       }
     }
 
     if (commissionPaid && adminPaid) {
-      console.log("✅ Payment fully verified.");
+      console.log("Payment fully verified.");
       return true;
     } else {
       if (!commissionPaid) {
-        console.warn("❌ Commission transfer not found or mismatched.");
+        console.warn("Commission transfer not found or mismatched.");
       }
       if (!adminPaid) {
-        console.warn("❌ Admin transfer not found or mismatched.");
+        console.warn("Admin transfer not found or mismatched.");
       }
       return false;
     }
   } catch (err) {
-    console.error("❌ Error in verifyPayment:", err.message);
+    console.error("Error in verifyPayment:", err.message);
     return false;
   }
 };

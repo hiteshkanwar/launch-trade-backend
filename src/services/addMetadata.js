@@ -3,17 +3,17 @@ const { Metaplex, keypairIdentity } = require("@metaplex-foundation/js");
 
 require("dotenv").config();
 
-// ✅ Initialize Solana Connection
+// Initialize Solana Connection
 const connection = new Connection(process.env.SOLANA_RPC_URL, "confirmed");
 
-// ✅ Load Wallet from `.env`
+// Load Wallet from `.env`
 const secretKeyArray = JSON.parse(process.env.SOLANA_SECRET_KEY);
 const payer = Keypair.fromSecretKey(new Uint8Array(secretKeyArray));
 
-// ✅ Initialize Metaplex Instance
+// Initialize Metaplex Instance
 const metaplex = Metaplex.make(connection).use(keypairIdentity(payer));
 
-console.log("✅ Signer Public Key:", payer.publicKey.toBase58());
+console.log("Signer Public Key:", payer.publicKey.toBase58());
 
 async function registerTokenMetadata(mintAddress, metadataUri, name, symbol) {
   try {
@@ -21,20 +21,20 @@ async function registerTokenMetadata(mintAddress, metadataUri, name, symbol) {
 
     const mint = new PublicKey(mintAddress);
 
-    // ✅ Create Metadata Account
+    // Create Metadata Account
     const { signature } = await metaplex.nfts().create({
       name: name,
       symbol: symbol,
-      uri: metadataUri, // ✅ Use IPFS URL from Pinata
+      uri: metadataUri, // Use IPFS URL from Pinata
       sellerFeeBasisPoints: 0, // No royalties
       mintAddress: mint,
       updateAuthority: payer, // Ensure the payer is the update authority
     });
 
-    console.log(`✅ Metadata successfully registered on Solana!`);
+    console.log(`Metadata successfully registered on Solana!`);
     console.log(`🔗 View Transaction: https://explorer.solana.com/tx/${signature}?cluster=devnet`);
   } catch (error) {
-    console.error("❌ Error registering metadata:", error);
+    console.error("Error registering metadata:", error);
     throw new Error("Metadata registration failed");
   }
 }

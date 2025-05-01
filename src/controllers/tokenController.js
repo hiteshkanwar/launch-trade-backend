@@ -1,5 +1,7 @@
 require('dotenv').config();
 const { Op } = require("sequelize"); // Add at the top if not already
+const { sequelize } = require("../db"); // Import sequelize
+
 const {
     Connection,
     Keypair,
@@ -60,7 +62,7 @@ const uploadToPinata = async (metadata, base64Image) => {
 
         // **Step 1: Upload Image (if provided)**
         if (base64Image) {
-            console.log("🟡 Converting Base64 Image to Buffer...");
+            console.log("Converting Base64 Image to Buffer...");
             const base64Data = base64Image.replace(/^data:image\/\w+;base64,/, ""); // Remove metadata
             const imageBuffer = Buffer.from(base64Data, "base64");
 
@@ -83,7 +85,7 @@ const uploadToPinata = async (metadata, base64Image) => {
             );
 
             imageIpfsUrl = `https://gateway.pinata.cloud/ipfs/${imageResponse.data.IpfsHash}`;
-            console.log("✅ Image Uploaded Successfully:", imageIpfsUrl);
+            console.log("Image Uploaded Successfully:", imageIpfsUrl);
         }
 
         // **Step 2: Upload Metadata JSON**
@@ -110,14 +112,36 @@ const uploadToPinata = async (metadata, base64Image) => {
         );
 
         const metadataIpfsUrl = `https://gateway.pinata.cloud/ipfs/${metadataResponse.data.IpfsHash}`;
-        console.log("✅ Metadata Uploaded Successfully:", metadataIpfsUrl);
+        console.log(" Metadata Uploaded Successfully:", metadataIpfsUrl);
 
         return metadataIpfsUrl;
     } catch (error) {
-        console.error("❌ Pinata Upload Failed:", error.response?.data || error.message);
+        console.error("Pinata Upload Failed:", error.response?.data || error.message);
         throw new Error("Metadata upload failed!");
     }
 };
+
+
+exports.getTrendingTokens = async (req, res) => {
+    try {
+        // Fetch 5 random tokens from the database
+        const tokens = await Token.findAll({
+            order: [sequelize.fn('RANDOM')], // This is how you fetch random rows in Sequelize
+            limit: 5, // Limit to 5 tokens
+            attributes: ['symbol', 'image_url'], // Only include symbol and image_url fields
+        });
+
+        if (tokens.length === 0) {
+            return res.status(200).json({ success: true, tokens: [], message: "No tokens found." });
+        }
+
+        res.status(200).json({ success: true, tokens });
+    } catch (error) {
+        console.error("Error fetching tokens:", error);
+        res.status(500).json({ success: false, message: "Failed to fetch tokens." });
+    }
+};
+
 
 exports.getTokensByWallet = async (req, res) => {
     try {
@@ -139,7 +163,7 @@ exports.getTokensByWallet = async (req, res) => {
   
       res.status(200).json({ success: true, tokens });
     } catch (error) {
-      console.error("❌ Error fetching tokens:", error);
+      console.error("Error fetching tokens:", error);
       res.status(500).json({ success: false, message: "Failed to fetch tokens." });
     }
   };
@@ -167,19 +191,19 @@ exports.createToken = async (req, res) => {
         let txId = null;
         let poolAddress = null;
 
-        console.log("📥 liquidityTokens (raw):", liquidityTokens);
-        console.log("📥 liquiditySOL (raw):", liquiditySOL);
+        console.log("liquidityTokens (raw):", liquidityTokens);
+        console.log("liquiditySOL (raw):", liquiditySOL);
 
          // let liquiditySig = null;
          const tokenFloat = parseFloat(liquidityTokens);
          const solFloat = parseFloat(liquiditySOL);
  
-         console.log("🔎 Parsed liquidityTokens (float):", tokenFloat);
-         console.log("🔎 Parsed liquiditySOL (float):", solFloat);
+         console.log("Parsed liquidityTokens (float):", tokenFloat);
+         console.log("Parsed liquiditySOL (float):", solFloat);
  
  
          const initialPrice = solFloat / tokenFloat;
-         console.log("📈 initialPrice:", initialPrice);
+         console.log("initialPrice:", initialPrice);
 
         if (await isBotRequest(user_wallet, ip)) {
             return res.status(429).json({ success: false, message: "⛔ Too many requests. Please slow down." });
@@ -206,33 +230,20 @@ exports.createToken = async (req, res) => {
         const userPublicKey = new PublicKey(user_wallet);
         const [user] = await User.findOrCreate({ where: { wallet_address: user_wallet } });
 
-        // 💰 Fee Calculation
+        // Fee Calculation
         let expectedCommission = 0;
         let expectedAdmin = 0;
-        // if (IS_DEV) {
-        //     expectedCommission = 0.00035;
-        //     expectedAdmin = 0.00015;
-        // } else {
-        //     const planPricing = {
-        //         basic: [0.049, 0.021],
-        //         standard: [0.35, 0.15],
-        //         advanced: [1.75, 0.75],
-        //     };
-        //     [expectedCommission, expectedAdmin] = planPricing[planType];
-        // }
        
             const planPricing = {
                 basic: [0.049, 0.021],
-                standard: [0.049, 0.21],
-                advanced: [0, 0],
-                // standard: [0.35, 0.15],
-              //  advanced: [1.05, 0.45],
+                standard: [0.21, 0.09],
+                advanced: [0.35, 0.15],
             };
         
             [expectedCommission, expectedAdmin] = planPricing[planType];
     
 
-        // ⛔ Payment Verification (Uncomment if needed)
+        //  Payment Verification (Uncomment if needed)
         const isPaymentValid = await verifyPayment(
             connection,
             txSignature,
@@ -319,10 +330,10 @@ exports.createToken = async (req, res) => {
             return res.status(400).json({ success: false, message: "Price too low. Adjust SOL/token ratio." });
         }
           
-        // ✅ Standard Plan - Immediate Liquidity
+        // Standard Plan - Immediate Liquidity
         if (autoLiquidity && planType != 'basic')
         {
-                        // 🧠 Shared Logic for Standard & Advanced: Mint to correct ATA
+                        // Shared Logic for Standard & Advanced: Mint to correct ATA
             const baseMintPk = new PublicKey(baseMint);
             const quoteMintPk = new PublicKey(process.env.SOL_TOKEN_MINT);
 
@@ -337,7 +348,7 @@ exports.createToken = async (req, res) => {
             const mintToATA = isTokenA ? ataA.address : ataB.address;
             const liquidityAmount = BigInt(tokenFloat * 10 ** 9); // Token amount for liquidity
 
-            console.log(`🎯 Minting liquidity tokens to ATA of ${isTokenA ? "Token A" : "Token B"}: ${mintToATA.toBase58()}`);
+            console.log(`Minting liquidity tokens to ATA of ${isTokenA ? "Token A" : "Token B"}: ${mintToATA.toBase58()}`);
 
             await mintTo(
             connection,
@@ -367,7 +378,7 @@ exports.createToken = async (req, res) => {
             
         }
 
-        // ⏳ Advanced Plan - Delayed Liquidity
+        // Advanced Plan - Delayed Liquidity
         if (autoLiquidity && planType === "advanced") {
            
             tokenAmount = parseFloat(liquidityTokens) * 10 ** 9;
@@ -414,9 +425,9 @@ exports.createToken = async (req, res) => {
                   meteora_url: `https://app.meteora.ag/pools/${poolAddress}`
                 }, { where: { mint_address: baseMint } });
             
-                console.log("✅ Advanced Plan: Liquidity added after delay");
+                console.log("Advanced Plan: Liquidity added after delay");
               } catch (err) {
-                console.error("❌ Advanced Plan Liquidity Failed:", err.message);
+                console.error(" Advanced Plan Liquidity Failed:", err.message);
               }
             }, cooldownTime);
             
@@ -458,7 +469,7 @@ exports.createToken = async (req, res) => {
         });
 
     } catch (error) {
-        console.error("❌ Error:", error);
+        console.error("Error:", error);
         res.status(500).json({ success: false, message: "Token creation failed." });
     }
 };

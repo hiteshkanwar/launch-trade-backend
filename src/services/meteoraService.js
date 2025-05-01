@@ -29,10 +29,13 @@ async function createMeteoraPool({ tokenMintA, tokenMintB, amountA, amountB }) {
   const poolAddress = derivePoolAddressWithConfig(memecoinMint, tokenBMint, feeConfigKey, programId);
   console.log("🌊 Pool address will be:", poolAddress.toBase58());
 
-  // ✅ Mint liquidity tokens to admin ATA
-  const [mintA, mintB] = [memecoinMint, tokenBMint].sort((a, b) =>
-    a.toBase58().localeCompare(b.toBase58())
-  );
+  // Mint liquidity tokens to admin ATA
+  // recently commented
+  // const [mintA, mintB] = [memecoinMint, tokenBMint].sort((a, b) =>
+  //   a.toBase58().localeCompare(b.toBase58())
+  // );
+  const mintA = new PublicKey(memecoinMint); // Your token (should be base)
+  const mintB = new PublicKey(tokenBMint);   // SOL or USDC (quote)
 
   const baseMint = mintA;
   const quoteMint = mintB;
@@ -56,7 +59,7 @@ async function createMeteoraPool({ tokenMintA, tokenMintB, amountA, amountB }) {
   const mintToATA = isTokenA ? ataA.address : ataB.address;
   const mintAmount = isTokenA ? tokenAAmount : tokenBAmount;
 
-  console.log(`🎯 Minting liquidity tokens to ATA of ${isTokenA ? "Token A" : "Token B"}: ${mintToATA.toBase58()}`);
+  console.log(`Minting liquidity tokens to ATA of ${isTokenA ? "Token A" : "Token B"}: ${mintToATA.toBase58()}`);
 
   await mintTo(
     connection,
@@ -67,7 +70,7 @@ async function createMeteoraPool({ tokenMintA, tokenMintB, amountA, amountB }) {
     isTokenA ? amountA : new BN(0) // only mint tokens, not SOL (handled with LAMPORTS already)
   );
 
-  // ✅ Create pool
+  // Create pool
   const transactions = await AmmImpl.createPermissionlessConstantProductMemecoinPoolWithConfig(
     connection,
     adminKeypair.publicKey,     // payer
@@ -81,7 +84,7 @@ async function createMeteoraPool({ tokenMintA, tokenMintB, amountA, amountB }) {
 
   for (const tx of transactions) {
     const txId = await provider.sendAndConfirm(tx, [adminKeypair]);
-    console.log("✅ TX sent:", txId);
+    console.log("TX sent:", txId);
   }
 
   return {

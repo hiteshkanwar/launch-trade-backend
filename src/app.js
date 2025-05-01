@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
+const contactRoutes = require("./routes/contactRoutes");
 const tokenRoutes = require("./routes/tokenRoutes");
 const userRoutes = require("./routes/userRoutes");
 
@@ -17,10 +18,20 @@ app.use(cors({
     credentials: true // Allow cookies & authentication headers
 }));
 
-console.log(555555,process.env.NODE_ENV == "development" )
 
-
+app.use("/api/contacts", contactRoutes);
 app.use("/api/tokens", tokenRoutes);
 app.use("/api/users", userRoutes);
+
+// Simple test route
+app.get("/api/test", (req, res) => {
+    res.status(200).json({
+      success: true,
+      message: "Backend is working!",
+      env: process.env.NODE_ENV,
+      timestamp: new Date(),
+    });
+  });
+  
 
 module.exports = app;
