@@ -227,7 +227,17 @@ exports.createToken = async (req, res) => {
             return res.status(400).json({ success: false, message: `Token "${symbol}" already exists.` });
         }
 
-        const userPublicKey = new PublicKey(user_wallet);
+        if (!user_wallet || typeof user_wallet !== "string") {
+          return res.status(400).json({ success: false, message: "Missing or invalid wallet address." });
+        }
+        
+        let userPublicKey;
+        try {
+          userPublicKey = new PublicKey(user_wallet);
+        } catch (err) {
+          console.error("❌ Invalid wallet format:", user_wallet);
+          return res.status(400).json({ success: false, message: "Invalid wallet address format." });
+        }
         const [user] = await User.findOrCreate({ where: { wallet_address: user_wallet } });
 
         // Fee Calculation
