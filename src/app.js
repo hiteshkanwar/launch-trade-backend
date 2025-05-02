@@ -11,13 +11,25 @@ dotenv.config();
 const app = express();
 app.use(express.json({ limit: "50mb" })); // Increase JSON payload limit
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
-app.use(cors({
-    origin: process.env.CLIENT_URL || "http://localhost:3000", // Allow frontend
-    methods: ["GET", "POST", "PUT", "DELETE"], // Allowed methods
-    allowedHeaders: ["Content-Type", "Authorization"], // Allowed headers
-    credentials: true // Allow cookies & authentication headers
-}));
 
+const allowedOrigins = [
+    "https://launchtrade.ai",
+    "https://www.launchtrade.ai",
+    // "http://localhost:3000"
+];
+
+app.use(cors({
+    origin: function (origin, callback) {
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            callback(new Error("CORS error: Origin not allowed"));
+        }
+    },
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true
+}));
 
 app.use("/api/contacts", contactRoutes);
 app.use("/api/tokens", tokenRoutes);
