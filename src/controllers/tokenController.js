@@ -128,7 +128,7 @@ exports.getTrendingTokens = async (req, res) => {
         const tokens = await Token.findAll({
             order: [sequelize.fn('RANDOM')], // This is how you fetch random rows in Sequelize
             limit: 5, // Limit to 5 tokens
-            attributes: ['symbol', 'image_url'], // Only include symbol and image_url fields
+            attributes: ['symbol', 'image_url', 'mint_address'], // Only include symbol and image_url fields
         });
 
         if (tokens.length === 0) {
