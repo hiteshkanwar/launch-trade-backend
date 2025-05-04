@@ -31,11 +31,11 @@ async function createMeteoraPool({ tokenMintA, tokenMintB, amountA, amountB }) {
 
   // Mint liquidity tokens to admin ATA
   // recently commented
-  // const [mintA, mintB] = [memecoinMint, tokenBMint].sort((a, b) =>
-  //   a.toBase58().localeCompare(b.toBase58())
-  // );
-  const mintA = new PublicKey(memecoinMint); // Your token (should be base)
-  const mintB = new PublicKey(tokenBMint);   // SOL or USDC (quote)
+  const [mintA, mintB] = [memecoinMint, tokenBMint].sort((a, b) =>
+    a.toBase58().localeCompare(b.toBase58())
+  );
+  // const mintA = new PublicKey(memecoinMint); // Your token (should be base)
+  // const mintB = new PublicKey(tokenBMint);   // SOL or USDC (quote)
 
   const baseMint = mintA;
   const quoteMint = mintB;
