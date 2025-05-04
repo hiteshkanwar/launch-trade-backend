@@ -459,9 +459,9 @@ exports.createToken = async (req, res) => {
                 admin_paid: true, admin_amount: expectedAdmin,
                 total_fee_paid_by_user: expectedCommission + expectedAdmin,
                 payment_signature: txSignature,
-                auto_liquidity: true,
-                dex_url: `https://birdeye.so/token/${baseMint}?chain=solana`,
-                jupiter_url: `https://jup.ag/swap?inputMint=${baseMint}&outputMint=${quoteMint}`,
+                auto_liquidity: autoLiquidity,
+                dex_url: autoLiquidity ? `https://birdeye.so/token/${baseMint}?chain=solana` : null,
+                jupiter_url: autoLiquidity ? `https://jup.ag/swap?inputMint=${baseMint}&outputMint=${quoteMint}` : null,
                 meteora_url: poolAddress ? `https://app.meteora.ag/pools/${poolAddress}` : null,
                 initial_liquidity_token: tokenAmount,
                 initial_liquidity_sol: solAmount,
@@ -473,8 +473,8 @@ exports.createToken = async (req, res) => {
             success: true,
             message: "Token created and listed.",
             mintAddress: baseMint,
-            jupiterUrl: `https://jup.ag/swap?inputMint=${baseMint}&outputMint=${quoteMint}`,
-            birdeyeUrl: `https://birdeye.so/token/${baseMint}?chain=solana`,
+            jupiterUrl: autoLiquidity ? `https://jup.ag/swap?inputMint=${baseMint}&outputMint=${quoteMint}` : null,
+            birdeyeUrl: autoLiquidity ? `https://birdeye.so/token/${baseMint}?chain=solana` : null,
             meteoraUrl: poolAddress ? `https://app.meteora.ag/pools/${poolAddress}` : null
         });
 
